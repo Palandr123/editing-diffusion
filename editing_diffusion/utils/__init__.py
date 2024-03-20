@@ -1,0 +1,1 @@
+from editing_diffusion.utils.spot_object_template import spot_object_template
