@@ -34,6 +34,7 @@ def get_key_objects(
     # Extracting additional negative prompt
     bg_prompt = response.split("Background:")[1].split("\n")[0].strip()
     negative_prompt = response.split("Negation:")[1].split("\n")[0].strip()
+    negative_prompt = negative_prompt if negative_prompt != "None" else ""
 
     parsed_result = {
         "objects": parsed_objects,
