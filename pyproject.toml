@@ -18,6 +18,7 @@ einops = "^0.7.0"
 ipykernel = "^6.25.2"
 accelerate = "^0.23.0"
 black = "^24.3.0"
+inflect = "^7.0.0"
 
 [build-system]
 requires = ["poetry-core"]
