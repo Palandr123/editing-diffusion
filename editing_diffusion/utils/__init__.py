@@ -1,1 +1,2 @@
 from editing_diffusion.utils.spot_object_template import spot_object_template
+from editing_diffusion.utils.detection import class_aware_non_maximum_suppression
