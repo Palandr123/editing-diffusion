@@ -71,3 +71,14 @@ def non_maximum_suppression(
         score_indices = score_indices[left]
 
     return result_scores, result_labels, result_boxes
+
+
+def post_process(box: list[float]) -> list[float]:
+    """
+    Make sure the box x,y and w, h lie in the [0, 1] range
+    """
+    new_box = []
+    for item in box:
+        item = min(1.0, max(0.0, item))
+        new_box.append(round(item, 3))
+    return new_box

@@ -6,7 +6,7 @@ from PIL.Image import Image
 import inflect
 
 from editing_diffusion.detectors.base import Detector
-from editing_diffusion.utils import class_aware_non_maximum_suppression
+from editing_diffusion.utils import class_aware_non_maximum_suppression, post_process
 
 p = inflect.engine()
 
@@ -39,7 +39,7 @@ class OWLViTv2Detector(Detector):
         device: torch.device | str,
         score_threshold: float,
         nms_threshold: float,
-    ) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    ) -> list[tuple[str, list[float]]]:
         if mode == "attribute":
             target_objects = [x for x in self.attribute_count]
         elif mode == "primitive":
@@ -92,4 +92,15 @@ class OWLViTv2Detector(Detector):
             scores, labels, boxes, nms_threshold
         )
 
-        return scores, labels, boxes
+        results = []
+        for box, label in zip(boxes, labels):
+            box = box.tolist()
+            box = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
+            box = post_process(box)
+            results.append(
+                (
+                    f"{target_objects[label]}",
+                    box,
+                )
+            )
+        return results
