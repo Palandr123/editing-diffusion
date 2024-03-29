@@ -15,14 +15,8 @@ class OWLViTv2Detector(Detector):
     def __init__(
         self,
         device: str | torch.device,
-        attr_detection_threshold: float = 0.6,
-        prim_detection_threshold: float = 0.2,
-        nms_threshold: float = 0.5,
     ):
         super().__init__()
-        self.default_attr_detection_threshold = attr_detection_threshold
-        self.default_prim_detection_threshold = prim_detection_threshold
-        self.default_nms_threshold = nms_threshold
 
         self.processor = Owlv2Processor.from_pretrained(
             "google/owlv2-base-patch16-ensemble"
@@ -103,4 +97,25 @@ class OWLViTv2Detector(Detector):
                     box,
                 )
             )
+        return results
+
+    def __call__(
+        self,
+        object_lists: list[tuple[str, list[str | None]]],
+        image: Image,
+        device: torch.device | str,
+        attribute_threshold: float = 0.6,
+        primitive_threshold: float = 0.2,
+        nms_threshold: float = 0.5,
+    ) -> list[tuple[str, list[float]]]:
+        self.register_objects(object_lists)
+        attribute_objects = self.detect(
+            image, "attribute", device, attribute_threshold, nms_threshold
+        )
+        primitive_objects = self.detect(
+            image, "primitive", device, primitive_threshold, nms_threshold
+        )
+        results = []
+        results.extend(attribute_objects)
+        results.extend(primitive_objects)
         return results
