@@ -14,13 +14,14 @@ def get_key_objects(
     device: str | torch.device,
     **model_params,
 ) -> dict[str, str | list[tuple[str, list[str | None]]]]:
-    input_ids = tokenizer.encode(message, return_tensors="pt")
+    prompt = tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+    input_ids = tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")
     generated_ids = model.generate(
         input_ids=input_ids.to(device),
         **model_params,
     )
-    response = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    response = response[len(message) :]
+    response = tokenizer.decode(generated_ids[0])
+    response = response[len(prompt):].replace("<eos>", "")
 
     # Extracting key objects
     key_objects_part = response.split("Objects:")[1]
@@ -51,7 +52,7 @@ def spot_objects(
     device: str | torch.device,
     **model_params,
 ) -> dict[str, str | list[tuple[str, list[str | None]]]]:
-    questions = f"User Prompt: {prompt}\nReasoning:\n"
-    message = spot_object_template + questions
+    question = {"role": "user", "content": f"User Prompt: {prompt}"}
+    message = [*spot_object_template, question]
     result = get_key_objects(tokenizer, model, message, device, **model_params)
     return result
