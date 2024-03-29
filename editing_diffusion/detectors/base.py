@@ -1,6 +1,6 @@
 class Detector:
     def __init__(self):
-        self.object_lists = []
+        self.object_lists: list[tuple[str, list[str | None]]] = []
         self.primitive_count = {}
         self.attribute_count = {}
         self.pred_primitive_count = {}
@@ -12,19 +12,19 @@ class Detector:
         """
         # Reset class variables
         self.object_lists = object_list
-        self.primitive_count = {}
-        self.attribute_count = {}
-        self.pred_primitive_count = {}
-        self.pred_attribute_count = {}
+        self.primitive_count: dict[str, int] = {}
+        self.attribute_count: dict[str, int] = {}
+        self.pred_primitive_count: dict[str, int] = {}
+        self.pred_attribute_count: dict[str, int] = {}
 
-        for (name, attribute_list) in object_list:
+        for name, attribute_list in object_list:
             self.pred_primitive_count[name] = 0
-            self.primitive_count[name] = len(attribute_list)
             for attribute in attribute_list:
                 if attribute is not None:
                     self.attribute_count[f"{attribute} {name}"] = (
                         self.attribute_count.get(f"{attribute} {name}", 0) + 1
                     )
                     self.pred_attribute_count[f"{attribute} {name}"] = 0
-                    self.primitive_count[name] = -1
-
+                else:
+                    self.primitive_count[name] = self.primitive_count.get(name, 0) + 1
+                    self.pred_primitive_count[name] = 0
