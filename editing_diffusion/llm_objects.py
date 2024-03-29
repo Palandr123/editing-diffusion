@@ -14,14 +14,16 @@ def get_key_objects(
     device: str | torch.device,
     **model_params,
 ) -> dict[str, str | list[tuple[str, list[str | None]]]]:
-    prompt = tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+    prompt = tokenizer.apply_chat_template(
+        message, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")
     generated_ids = model.generate(
         input_ids=input_ids.to(device),
         **model_params,
     )
     response = tokenizer.decode(generated_ids[0])
-    response = response[len(prompt):].replace("<eos>", "")
+    response = response[len(prompt) :].replace("<eos>", "")
 
     # Extracting key objects
     key_objects_part = response.split("Objects:")[1]
