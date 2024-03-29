@@ -19,6 +19,7 @@ ipykernel = "^6.25.2"
 accelerate = "^0.23.0"
 black = "^24.3.0"
 inflect = "^7.0.0"
+ipywidgets = "^8.1.2"
 
 [build-system]
 requires = ["poetry-core"]
