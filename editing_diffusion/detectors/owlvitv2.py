@@ -107,7 +107,7 @@ class OWLViTv2Detector(Detector):
         attribute_threshold: float = 0.6,
         primitive_threshold: float = 0.2,
         nms_threshold: float = 0.5,
-    ) -> list[tuple[str, list[float]]]:
+    ) -> dict[str, list[list[float]]]:
         self.register_objects(object_lists)
         attribute_objects = self.detect(
             image, "attribute", device, attribute_threshold, nms_threshold
@@ -118,4 +118,10 @@ class OWLViTv2Detector(Detector):
         results = []
         results.extend(attribute_objects)
         results.extend(primitive_objects)
-        return results
+        results_dict: dict[str, list[list[float]]] = {}
+        for (name, box) in results:
+            if name in results_dict:
+                results_dict[name].append(box)
+            else:
+                results_dict[name] = [box]
+        return results_dict
