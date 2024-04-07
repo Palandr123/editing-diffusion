@@ -1,6 +1,5 @@
 import math
 
-import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from diffusers.models.attention_processor import Attention
@@ -14,7 +13,7 @@ from diffusers import StableDiffusionXLPipeline
 
 class CustomAttentionProcessor:
     r"""
-    Processor for implementing scaled dot-product attention
+    Processor for implementing scaled dot-product attention (enabled by default if you're using PyTorch 2.0).
     """
 
     def __init__(self, resolution: int = 64, save_aux: bool = True):
@@ -22,18 +21,18 @@ class CustomAttentionProcessor:
             raise ImportError(
                 "AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
             )
+
         self.resolution = resolution
         self.save_aux = save_aux
 
     def __call__(
         self,
         attn: Attention,
-        hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor | None = None,
-        attention_mask: torch.FloatTensor | None = None,
-        temb: torch.FloatTensor | None = None,
-        **kwargs,
-    ) -> torch.Tensor:
+        hidden_states,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        temb=None,
+    ):
         residual = hidden_states
 
         if attn.spatial_norm is not None:
@@ -80,7 +79,7 @@ class CustomAttentionProcessor:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        ### Extract cross-attention maps
+        ### extract cross-attention maps
         query_ = attn.head_to_batch_dim(query)
         key_ = attn.head_to_batch_dim(key)
         scores_ = attn.get_attention_scores(query_, key_, attention_mask)
@@ -91,16 +90,20 @@ class CustomAttentionProcessor:
             scores_ = TF.resize(
                 scores_.permute(0, 3, 1, 2), self.resolution, antialias=True
             ).permute(0, 2, 3, 1)
-        if not hasattr(attn, "_aux"):
-            attn._aux = {"attn": []}
-        if not self.save_aux:
-            attn._aux["attn"] = [None] * len(attn._aux["attn"]) + [scores_]
-        else:
-            if len(attn._aux["attn"]) > 0:
-                attn._aux["attn"][-1] = attn._aux["attn"][
-                    -1
-                ].cpu()  # Move to CPU if needed
-            attn._aux["attn"].append(scores_)
+        try:
+            if not self.save_aux:
+                len_ = len(attn._aux["attn"])
+                del attn._aux["attn"]
+                attn._aux["attn"] = [None] * len_ + [scores_.cpu()]
+            else:
+                attn._aux["attn"][-1] = attn._aux["attn"][-1].cpu()
+                attn._aux["attn"].append(scores_.cpu())
+        except:
+            try:
+                del attn._aux["attn"]
+            except:
+                pass
+            attn._aux = {"attn": [scores_]}
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
