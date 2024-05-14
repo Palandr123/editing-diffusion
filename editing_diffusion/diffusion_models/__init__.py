@@ -1,0 +1,1 @@
+from editing_diffusion.diffusion_models.stablediffusionxl_pipeline import SDXLEditingPipeline
