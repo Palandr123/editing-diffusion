@@ -1,0 +1,5 @@
+path: captions1.txt
+device: cuda:1
+llm_device: cuda:2
+orig_dir: images/orig
+edited_dir: images/edited
