@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
+import torch
 
 
 def class_aware_non_maximum_suppression(
@@ -82,3 +83,26 @@ def post_process(box: list[float]) -> list[float]:
         item = min(1.0, max(0.0, item))
         new_box.append(round(item, 3))
     return new_box
+
+
+def boxes_to_masks(
+    boxes: dict[str, list[list[float]]], image_shape: tuple[int, int]
+) -> dict[str, list[torch.Tensor]]:
+    height, width = image_shape
+    res: dict[str, list[torch.Tensor]] = {}
+    for name, box_list in boxes.items():
+        for box in box_list:
+            x1, y1, w, h = box
+            x2 = x1 + w
+            y2 = y1 + h
+            x1 *= width
+            x2 *= width
+            y1 *= height
+            y2 *= height
+            mask = torch.zeros((height, width))
+            mask[int(y1):int(y2), int(x1):int(x2)] = 1.0
+            if name in res:
+                res[name].append(mask)
+            else:
+                res[name] = [mask]
+    return res
