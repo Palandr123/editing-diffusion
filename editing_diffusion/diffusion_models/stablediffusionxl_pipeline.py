@@ -5,10 +5,16 @@ from typing import Callable, Optional, Any
 import numpy as np
 import torch
 from diffusers import StableDiffusionXLPipeline
-from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
+from diffusers.pipelines.stable_diffusion_xl.pipeline_output import (
+    StableDiffusionXLPipelineOutput,
+)
 
 from editing_diffusion.editing import search_sequence_numpy
-from editing_diffusion.editing.edits import preserve
+from editing_diffusion.editing.edits import (
+    preserve,
+    preserve_position,
+    preserve_background,
+)
 
 
 class SDXLEditingPipeline(StableDiffusionXLPipeline):
@@ -149,13 +155,9 @@ class SDXLEditingPipeline(StableDiffusionXLPipeline):
                     words = [words]
                 idxs = []
                 for word in words:
-                    word_ids = self.tokenizer(word, return_tensors="np")[
-                        "input_ids"
-                    ]
+                    word_ids = self.tokenizer(word, return_tensors="np")["input_ids"]
                     word_ids = word_ids[word_ids < 49406]
-                    idxs.append(
-                        search_sequence_numpy(prompt_text_ids, word_ids)
-                    )
+                    idxs.append(search_sequence_numpy(prompt_text_ids, word_ids))
                 edit["idxs"] = np.concatenate(idxs)
 
         # 3. Encode input prompt
@@ -250,7 +252,8 @@ class SDXLEditingPipeline(StableDiffusionXLPipeline):
         torch.cuda.empty_cache()
         if sg_t_end < 0:
             sg_t_end = len(timesteps)
-
+        res = []
+        masks = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # torch.cuda.empty_cache()
@@ -300,7 +303,21 @@ class SDXLEditingPipeline(StableDiffusionXLPipeline):
                         else:
                             key_aux = {"": {k: sg_aux[k] for k in edit["mode"]}}
                         losses = []
+                        mask1 = torch.zeros(list(key_aux.values())[0][i].shape[:-1])
+                        target_box = detections[target_object[0]][target_object[1]]
+                        x1, y1, x2, y2 = target_box
+                        mask1[..., y1:y2, x1:x2] = 1.0
+                        for id, box in enumerate(detections[target_object[0]]):
+                            x1, y1, x2, y2 = box
+                            x3, y3, x4, y4 = target_box
+                            area_intersection = max(
+                                (min(x2, x4) - max(x1, x3)), 0
+                            ) * max((min(y2, y4) - max(y1, y3)), 0)
+                            if 0 < area_intersection / ((x4 - x3) * (y4 - y3)) < 0.25:
+                                x1, y1, x2, y2 = box
+                                mask1[..., y1:y2, x1:x2] = 0.0
                         wt = edit.get("weight", 1.0)
+                        a = {}
                         if wt:
                             tgt = edit.get("tgt", None)
                             if tgt is not None:
@@ -314,52 +331,149 @@ class SDXLEditingPipeline(StableDiffusionXLPipeline):
                                     v,
                                     i=i,
                                     idxs=edit["idxs"],
+                                    mask=mask1,
                                     **edit.get("kwargs", {}),
                                     tgt=tgt[k] if tgt is not None else None,
                                 )
+                                a[k] = v
                                 losses.append(loss)
-                        edit_loss = torch.stack(losses).mean()
-                        sg_loss += wt * edit_loss
+                            edit_loss = torch.stack(losses).mean()
+                            sg_loss += wt * edit_loss
+
+                        mask_attention = torch.zeros(
+                            list(key_aux.values())[0][i].shape[:-1]
+                        )
+                        for v in tgt.values():
+                            mask_attention += v[i][..., edit["idxs"]].mean(dim=-1)
+                        mask_attention /= len(key_aux.values())
+                        mask_attention = (mask_attention - mask_attention.min()) / (
+                            mask_attention.max() - mask_attention.min()
+                        )
+                        target_box = detections[target_object[0]][target_object[1]]
+                        for id, box in enumerate(detections[target_object[0]]):
+                            x1, y1, x2, y2 = box
+                            x3, y3, x4, y4 = target_box
+                            area_intersection = max(
+                                (min(x2, x4) - max(x1, x3)), 0
+                            ) * max((min(y2, y4) - max(y1, y3)), 0)
+                            if 0 < area_intersection / ((x4 - x3) * (y4 - y3)) < 0.25:
+                                x1, y1, x2, y2 = box
+                                mask_attention[..., y1:y2, x1:x2] = 0.0
+                        masks.append(mask_attention)
                         losses = []
                         key_aux = sg_aux["last_feats"]
                         tgt = edit.get("tgt", None)
                         tgt = tgt["last_feats"]
+                        mask = torch.ones(key_aux["up_blocks.2"][i].shape)
                         for name, object_list in detections.items():
+                            for id, box in enumerate(object_list):
+                                box_preserve = [2 * x for x in box]
+                                x1, y1, x2, y2 = box_preserve
+                                mask[:, :, y1:y2, x1:x2] = 0.0
+                                if name == target_object[0] and id == target_object[1]:
+                                    shift = edit.get("kwargs", {}).get("shift", (0, 0))
+                                    x, y = shift
+                                    x1 += 2 * x
+                                    x2 += 2 * x
+                                    y1 += 2 * y
+                                    y2 += 2 * y
+                                    mask[:, :, y1:y2, x1:x2] = 0.0
+
+                        for name, object_list in detections.items():
+                            mask2 = torch.zeros(
+                                list(sg_aux[edit["mode"]].values())[0][i].shape[:-1]
+                            )
+                            idxs = []
+                            for word in name.split(" "):
+                                word_ids = self.tokenizer(word, return_tensors="np")[
+                                    "input_ids"
+                                ]
+                                word_ids = word_ids[word_ids < 49406]
+                                idxs.append(
+                                    search_sequence_numpy(prompt_text_ids, word_ids)
+                                )
+                            idxs = np.concatenate(idxs)
+                            for v in edit["tgt"][edit["mode"]].values():
+                                mask2 += v[i][..., idxs].mean(dim=-1)
+                            mask2 /= len(key_aux.values())
+                            mask2 = (mask2 - mask2.min()) / (mask2.max() - mask2.min())
 
                             for id, box in enumerate(object_list):
-                                if name == target_object[0] and id == target_object[1]:
-                                    continue
-                                words = name
-                                if not isinstance(words, list):
-                                    words = [words]
-                                idxs = []
-                                for word in words:
-                                    word_ids = self.tokenizer(word, return_tensors="np")[
-                                        "input_ids"
-                                    ]
-                                    word_ids = word_ids[word_ids < 49406]
-                                    idxs.append(
-                                        search_sequence_numpy(prompt_text_ids, word_ids)
-                                    )
+                                mask2_object = mask2.clone()
+                                for _, box1 in enumerate(detections[name]):
+                                    x1, y1, x2, y2 = box1
+                                    x3, y3, x4, y4 = box
+                                    area_intersection = max(
+                                        (min(x2, x4) - max(x1, x3)), 0
+                                    ) * max((min(y2, y4) - max(y1, y3)), 0)
+                                    if (
+                                        0
+                                        < area_intersection / ((x4 - x3) * (y4 - y3))
+                                        < 0.25
+                                    ):
+                                        x1, y1, x2, y2 = box1
+                                        mask2_object[..., y1:y2, x1:x2] = 0.0
                                 for k, v in key_aux.items():
                                     box_preserve = [2 * x for x in box]
-                                    loss = preserve(
-                                        v,
-                                        i=i,
-                                        idxs=None,
-                                        box_orig = box_preserve,
-                                        target_aux=tgt[k] if tgt is not None else None,
-                                    )
+                                    if (
+                                        name == target_object[0]
+                                        and id == target_object[1]
+                                    ):
+                                        shift = edit.get("kwargs", {}).get(
+                                            "shift", (0, 0)
+                                        )
+                                        x, y = shift
+                                        shift = (2 * x, 2 * y)
+                                        loss = edit["w1"] * preserve_position(
+                                            v,
+                                            i=i,
+                                            shift=shift,
+                                            box_orig=box_preserve,
+                                            mask=mask2_object,
+                                            target_aux=(
+                                                tgt[k] if tgt is not None else None
+                                            ),
+                                        )
+                                    else:
+                                        loss = edit.get(
+                                            "weight_preserve", 1.0
+                                        ) * preserve(
+                                            v,
+                                            i=i,
+                                            idxs=None,
+                                            box_orig=box_preserve,
+                                            mask=mask2_object,
+                                            target_aux=(
+                                                tgt[k] if tgt is not None else None
+                                            ),
+                                        )
                                     losses.append(loss.cpu())
+                        for k, v in key_aux.items():
+                            loss = edit["w2"] * preserve_background(
+                                v,
+                                i=i,
+                                idxs=None,
+                                mask=mask,
+                                target_aux=tgt[k] if tgt is not None else None,
+                            )
+                            losses.append(loss.cpu())
+
+                        res.append(a)
                         if len(losses) != 0:
                             preserve_loss = torch.stack(losses).mean()
-                            sg_loss += edit.get("weight_preserve", 1.0) * preserve_loss
-                        sg_grad = (
-                            torch.autograd.grad(sg_loss_rescale * sg_loss, latents)[0]
-                            / sg_loss_rescale
-                        )
-                        noise_pred = noise_pred + sg_grad_wt * sg_grad
-                        assert not noise_pred.isnan().any()
+                            sg_loss += preserve_loss
+                        if not torch.isnan(sg_loss).any():
+
+                            sg_grad = (
+                                torch.autograd.grad(sg_loss_rescale * sg_loss, latents)[
+                                    0
+                                ]
+                                / sg_loss_rescale
+                            )
+                            if not torch.isnan(sg_grad).any():
+                                noise_pred = noise_pred + sg_grad_wt * sg_grad
+                        if noise_pred.isnan().any():
+                            return None
                     latents.detach()
 
                 # compute the previous noisy sample x_t -> x_t-1
